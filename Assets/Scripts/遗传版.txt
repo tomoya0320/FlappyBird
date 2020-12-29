@@ -1,0 +1,225 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+public class SortFitness : IComparer<Bird>
+{
+    public int Compare(Bird b1, Bird b2)
+    {
+        if (b1 == null && b2 == null) return 0;
+        if (b1 == null) return -1;
+        if (b2 == null) return 1;
+        if (float.Parse(b1.fitness.text) < float.Parse(b2.fitness.text)) return -1;
+        if (float.Parse(b1.fitness.text) > float.Parse(b2.fitness.text)) return 1;
+        return 0;
+    }
+}
+public class Bird : MonoBehaviour
+{
+    public Sprite[] birdfly;
+    public float force;
+    public Main main;
+    public Image birdImg;
+
+    private Image in1;
+    private Image in2;
+    private Image out1;
+    public Text fitness;
+    public Text score;
+
+    public int no;
+    public BPThree bpThree;
+    public Matrix lastInput;
+    public Matrix lastOutput;
+    public float lastDistY;
+
+    public static int hideNum = 6;
+    public static int inputNum = 2;
+    public static int outputNum = 1;
+    public static Bird[] birdInfos = new Bird[10];
+    public static float gBestFit = float.MinValue;
+    public static BPThree gBestBP;
+    public static int k = 0;
+
+    private float distToTreeX;
+    private float distToTreeY;
+    private float startTime;
+    private int aniIndex = 0;
+    private int count = 0;
+    private void OnDrawGizmos()
+    {
+        int index = main.treeList[0].transform.position.x > transform.position.x ? 0 : 1;
+        Vector3 to = main.treeList[index].transform.position;
+        to.y = transform.position.y;
+        Gizmos.color = Color.white;
+        Gizmos.DrawLine(transform.position, to);
+    }
+    // Start is called before the first frame update
+    void Start()
+    {
+        no = main.birdList.IndexOf(this);
+        if (birdInfos[no] == null)
+        {
+            bpThree = new BPThree(inputNum, hideNum, outputNum);
+            birdInfos[no] = this;
+        }
+        else
+        {
+            bpThree = birdInfos[no].bpThree;
+        }
+        startTime = Time.time;
+
+        in1 = birdImg.transform.GetChild(1).GetComponent<Image>();
+        in2 = birdImg.transform.GetChild(2).GetComponent<Image>();
+        out1 = birdImg.transform.GetChild(3).GetComponent<Image>();
+        fitness = birdImg.transform.GetChild(4).GetComponent<Text>();
+        score = birdImg.transform.GetChild(5).GetComponent<Text>();
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        if (Time.timeScale == 0 || !gameObject.activeSelf)
+        {
+            return;
+        }
+        int index = main.treeList[0].transform.position.x > transform.position.x ? 0 : 1;
+        distToTreeX = main.treeList[index].GetComponent<RectTransform>().anchoredPosition.x - GetComponent<RectTransform>().anchoredPosition.x;
+        in2.fillAmount = Mathf.Abs(distToTreeX / Screen.width);
+        distToTreeY = main.treeList[index].GetComponent<RectTransform>().anchoredPosition.y - GetComponent<RectTransform>().anchoredPosition.y;
+        in1.fillAmount = Mathf.Abs(distToTreeY / Screen.height);
+        fitness.text = ((Time.time - startTime) * 100.0f).ToString("0.00");
+        decide();
+        if (count == 0)
+        {
+            GetComponent<Image>().sprite = birdfly[aniIndex];
+            aniIndex = (aniIndex + 1) % birdfly.Length;
+            birdImg.sprite = GetComponent<Image>().sprite;
+        }
+        count = (count + 1) % 10;
+    }
+    private void decide()
+    {
+        lastDistY = distToTreeY;
+        lastInput = new Matrix(new float[,] { { distToTreeX, distToTreeY } });
+        lastOutput = bpThree.testData(lastInput);
+        float result = lastOutput.get(0, 0);
+
+        if (result > 0.5f)
+        {
+            out1.fillAmount = 1;
+            out1.color = Color.green;
+            GetComponent<Rigidbody2D>().velocity = Vector2.zero;
+            GetComponent<Rigidbody2D>().AddForce(Vector2.up * force);
+        }
+        else
+        {
+            out1.fillAmount = 0.5f;
+            out1.color = Color.red;
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.gameObject.tag.Equals("Score"))
+        {
+            int s = int.Parse(score.text);
+            s++;
+            score.text = s.ToString();
+        }
+        else if (!collision.gameObject.tag.Equals("Player"))
+        {
+            birdInfos[no] = this;
+            int count = 0;
+            foreach (Bird b in main.birdList)
+            {
+                if (b.gameObject.activeSelf)
+                    count++;
+            }
+            if (count <= 1)
+            {
+                updateBirdInfo();
+                SceneManager.LoadScene(0);
+            }
+            else
+            {              
+				in1.fillAmount = 0;
+                in2.fillAmount = 0;
+                out1.fillAmount = 0;
+                birdImg.color = new Color(0.5f, 0.5f, 0.5f);
+                gameObject.SetActive(false);
+            }
+        }
+    }
+
+    private void updateBirdInfo()
+    {
+        List<Bird> birdList = new List<Bird>(birdInfos);
+        birdList.Sort(new SortFitness());
+        if (float.Parse(birdList[9].fitness.text) > gBestFit)
+        {
+            gBestFit = float.Parse(birdList[9].fitness.text);
+            gBestBP = birdList[9].bpThree;
+        }
+        else
+        {
+            birdList[8].bpThree = birdList[9].bpThree;
+            birdList[9].bpThree = gBestBP;
+            birdList[9].fitness.text = gBestFit.ToString();
+        }
+
+        birdList[5].bpThree = cross(birdList[8].bpThree, birdList[9].bpThree);
+
+        for (int n = 2; n < 5; n++)
+        {
+            birdList[n].bpThree = cross(birdList[Random.Range(6, 10)].bpThree, birdList[Random.Range(6, 10)].bpThree);
+        }
+        birdList[1].bpThree = birdList[Random.Range(6, 10)].bpThree;
+        birdList[0].bpThree = new BPThree(inputNum, hideNum, outputNum);
+        for (int n = 0; n < birdList.Count; n++)
+        {
+            if (Random.Range(0, 1.0f) < 0.2f)
+            {
+                int i, j;
+                i = Random.Range(0, inputNum);
+                j = Random.Range(0, hideNum);
+                birdList[n].bpThree.hide_weight.set(
+                    Random.Range(-BPThree.MaxWeight, BPThree.MaxWeight), i, j);
+                i = Random.Range(0, hideNum);
+                j = Random.Range(0, outputNum);
+                birdList[n].bpThree.output_weight.set(
+                    Random.Range(-BPThree.MaxWeight, BPThree.MaxWeight), i, j);
+            }
+            birdInfos[birdList[n].no] = birdList[n];
+        }
+
+        gBestFit = float.Parse(birdList[9].fitness.text);
+        k++;
+    }
+    BPThree cross(BPThree p1, BPThree p2)
+    {
+        BPThree tmp = p1;
+        for (int i = 0; i < inputNum; i++)
+        {
+            for (int j = 0; j < hideNum; j++)
+            {
+                if (Random.Range(0, 1.0f) < 0.5f)
+                {
+                    tmp.hide_weight.set(p2.hide_weight.get(i, j), i, j);
+                }
+            }
+        }
+        for (int i = 0; i < hideNum; i++)
+        {
+            for (int j = 0; j < outputNum; j++)
+            {
+                if (Random.Range(0, 1.0f) < 0.5f)
+                {
+                    tmp.output_weight.set(p2.output_weight.get(i, j), i, j);
+                }
+            }
+        }
+        return tmp;
+    }
+}

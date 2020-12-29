@@ -1,0 +1,178 @@
+﻿using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+public class Bird : MonoBehaviour
+{
+    public Sprite[] birdfly;
+    public float force;
+    public Main main;
+    public Image birdImg;
+
+    private Image in1;
+    private Image in2;
+    private Image out1;
+    private Text fitness;
+    private Text score;
+
+    public int no;
+    public BPThree bpThree;//相当于原来的位置
+    public BPThree vBP;
+    public BPThree oBestBP;
+    public float oBestFit = float.MinValue;
+
+    public Matrix lastInput;
+    public Matrix lastOutput;
+    public float lastDistY;
+
+    public static int hideNum = 8;
+    public static int inputNum = 2;
+    public static int outputNum = 1;
+    public static Bird[] birdInfos = new Bird[10];
+    public static float gBestFit = float.MinValue;
+    public static BPThree gBestBP;
+
+    public static float wMax = 30.0f;
+    public static float wMin = 0.01f;
+    public static float c1 = 1.0f;
+    public static float c2 = 1.0f;
+    public static float maxV = 100.0f * BPThree.MaxWeight;
+    public static int k = 0;
+    public static int maxIterationNum = 10000;
+
+    private float distToTreeX;
+    private float distToTreeY;
+    private float startTime;
+    private int aniIndex = 0;
+    private int count = 0;
+    // Start is called before the first frame update
+    void Start()
+    {
+        no = main.birdList.IndexOf(this);
+        if (birdInfos[no] == null)
+        {
+            bpThree = new BPThree(inputNum, hideNum, outputNum);
+            vBP = new BPThree(inputNum, hideNum, outputNum);
+            oBestBP = bpThree;
+        }
+        else
+        {
+            bpThree = birdInfos[no].bpThree;
+            vBP = birdInfos[no].vBP;
+            oBestBP = birdInfos[no].oBestBP;
+            oBestFit = birdInfos[no].oBestFit;
+        }
+        startTime = Time.time;
+
+        in1 = birdImg.transform.GetChild(1).GetComponent<Image>();
+        in2 = birdImg.transform.GetChild(2).GetComponent<Image>();
+        out1 = birdImg.transform.GetChild(3).GetComponent<Image>();
+        fitness = birdImg.transform.GetChild(4).GetComponent<Text>();
+        score = birdImg.transform.GetChild(5).GetComponent<Text>();
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        if (Time.timeScale == 0 || !gameObject.activeSelf)
+        {
+            return;
+        }
+        int index = main.treeList[0].transform.position.x > transform.position.x ? 0 : 1;
+        distToTreeX = main.treeList[index].GetComponent<RectTransform>().anchoredPosition.x - GetComponent<RectTransform>().anchoredPosition.x;
+        in2.fillAmount = Mathf.Abs(distToTreeX / Screen.width);
+        distToTreeY = main.treeList[index].GetComponent<RectTransform>().anchoredPosition.y - GetComponent<RectTransform>().anchoredPosition.y;
+        in1.fillAmount = Mathf.Abs(distToTreeY / Screen.height);
+        fitness.text = ((Time.time - startTime) * 100.0f).ToString("0.00");
+        decide();
+        if (count == 0)
+        {
+            GetComponent<Image>().sprite = birdfly[aniIndex];
+            aniIndex = (aniIndex + 1) % birdfly.Length;
+            birdImg.sprite = GetComponent<Image>().sprite;
+        }
+        count = (count + 1) % 10;
+    }
+    private void decide()
+    {
+        lastDistY = distToTreeY;
+        lastInput = new Matrix(new float[,] { { distToTreeX, distToTreeY } });
+        lastOutput = bpThree.testData(lastInput);
+        float result = lastOutput.get(0, 0);
+        if (result > 0.5f)
+        {
+            out1.fillAmount = 1;
+            out1.color = Color.green;
+            GetComponent<Rigidbody2D>().velocity = Vector2.zero;
+            GetComponent<Rigidbody2D>().AddForce(Vector2.up * force);
+        }
+        else
+        {
+            out1.fillAmount = 0.5f;
+            out1.color = Color.red;
+        }
+    }
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.gameObject.tag.Equals("Score"))
+        {
+            int s = int.Parse(score.text);
+            s++;
+            score.text = s.ToString();
+        }
+        else if (!collision.gameObject.CompareTag("Player"))
+        {
+            birdInfos[no] = this;
+            int count = 0;
+            foreach (Bird b in main.birdList)
+            {
+                if (b.gameObject.activeSelf)
+                    count++;
+            }
+            if (count <= 1)
+            {
+                updateBirdInfo();
+                SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+            }
+            else
+            {
+                in1.fillAmount = 0;
+                in2.fillAmount = 0;
+                out1.fillAmount = 0;
+                birdImg.color = new Color(0.5f, 0.5f, 0.5f);
+                gameObject.SetActive(false);
+            }
+        }
+    }
+
+    private void updateBirdInfo()
+    {
+        //更新每个个体自己的最优解
+        for (int n = 0; n < birdInfos.Length; n++)
+        {
+            float tFitness = float.Parse(birdInfos[n].fitness.text);
+            if (tFitness > birdInfos[n].oBestFit)
+            {
+                birdInfos[n].oBestFit = tFitness;
+                birdInfos[n].oBestBP = birdInfos[n].bpThree;
+            }
+            //更新整体的最优解
+            if (birdInfos[n].oBestFit > gBestFit)
+            {
+                gBestFit = birdInfos[n].oBestFit;
+                gBestBP = birdInfos[n].oBestBP;
+            }
+            //更新每个个体的速度和位置
+            float w = wMax - (wMax - wMin) * (k / (float)maxIterationNum);
+
+            BPThree tmp1, tmp2, tmp3;
+            tmp1 = birdInfos[n].vBP.mtimes(w);
+            tmp2 = birdInfos[n].oBestBP.minus(birdInfos[n].bpThree).mtimes(c1 * Random.Range(0, 1.0f));
+            tmp3 = gBestBP.minus(birdInfos[n].bpThree).mtimes(c2 * Random.Range(0, 1.0f));
+
+            birdInfos[n].vBP = tmp1.plus(tmp2, maxV).plus(tmp3, maxV);
+            birdInfos[n].bpThree = birdInfos[n].bpThree.plus(birdInfos[n].vBP);
+        }
+        k++;
+    }
+}
